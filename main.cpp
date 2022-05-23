@@ -139,6 +139,9 @@ void init(const char *filename) {
   if (fp == NULL) {
       return;
   }
+  // Set Head Pointer
+  fwrite (nullPtr, 1, 8, fp);
+  // Set End Pointer
   fwrite (nullPtr, 1, 8, fp);
    
   fclose(fp);
