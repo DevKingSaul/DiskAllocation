@@ -22,8 +22,7 @@ uint64_t toUINT64(unsigned char *buf) {
     return result;
 }
 
-unsigned char *fromUINT64(uint64_t uint) {
-  unsigned char * result = (unsigned char *)malloc(8);
+void _fromUINT64(unsigned char *result, uint64_t uint) {
   result[7] = uint & 0xff;
   result[6] = (uint >> 8) & 0xff;
   result[5] = (uint >> 16) & 0xff;
@@ -32,6 +31,11 @@ unsigned char *fromUINT64(uint64_t uint) {
   result[2] = (uint >> 40) & 0xff;
   result[1] = (uint >> 48) & 0xff;
   result[0] = (uint >> 56) & 0xff;
+}
+
+unsigned char *fromUINT64(uint64_t uint) {
+  unsigned char *result = (unsigned char *)malloc(8);
+  _fromUINT64(result, uint);
   return result;
 }
 
@@ -70,18 +74,21 @@ uint64_t alloc(const char *filename, int inSize) {
 
   fp = fopen (filename, "r+b");
 
-  unsigned char *firstFreeBuf = (unsigned char *)malloc(8);
+  unsigned char freeHeader[16] = { 0 };
 
-  fread (firstFreeBuf, 1, 8, fp);
+  fseek (fp, 0, SEEK_SET);
+  fread (freeHeader, 1, 16, fp);
 
 
-  if (memcmp(firstFreeBuf, nullPtr, 8) == 0) {
+  if (memcmp(freeHeader, nullPtr, 8) == 0) {
     returnPtr = _allocEnd(fp, size);
   } else {
     printf("Free Block found.\n");
-  }
+    uint64_t headPtr = toUINT64(freeHeader);
+    uint64_t endPtr = toUINT64(freeHeader + 8);
 
-  free (firstFreeBuf);
+    returnPtr = _allocEnd(fp, size);
+  }
 
   fclose (fp);
 
@@ -89,46 +96,198 @@ uint64_t alloc(const char *filename, int inSize) {
 }
 
 void free(const char *filename, uint64_t ptr) {
+  if (ptr < 16) {
+    printf("Illegal Pointer/Position\n");
+    return;
+  }
   FILE *fp;
 
   fp = fopen (filename, "r+b");
 
-  unsigned char *pointerInfo = (unsigned char *)malloc(2);
+  unsigned char pointerInfo[2] = { 0 };
 
-  fseeko64(fp, ptr - 2, SEEK_SET);
-  fread(pointerInfo, 1, 2, fp);
+  fseeko64 (fp, ptr - 2, SEEK_SET);
+  fread    (pointerInfo, 1, 2, fp);
 
   unsigned short int headerInfo = toUINT16(pointerInfo);
   unsigned short int headerSize = (headerInfo & 0xfffe) >> 1;
   bool isAllocated = (headerInfo & 1) == 1;
+
+  printf("Block Size: %u\n", headerSize);
   
   if (isAllocated == false) {
     printf("This Pointer isnt even allocated ;-;\n");
   } else {
     pointerInfo[1] &= 0xfe;
-    fseek (fp, -1, SEEK_CUR);
+    fseek  (fp, -1, SEEK_CUR);
     fwrite (pointerInfo + 1, 1, 1, fp);
-    fseek (fp, headerSize + 1, SEEK_CUR);
+    fseek  (fp, headerSize + 1, SEEK_CUR);
     fwrite (pointerInfo + 1, 1, 1, fp);
 
-    unsigned char *firstFreeBuf = (unsigned char *)malloc(8);
+    unsigned char freeHeader[16] = { 0 };
 
     fseek (fp, 0, SEEK_SET);
-    fread (firstFreeBuf, 1, 8, fp);
-  
-    if (memcmp(firstFreeBuf, nullPtr, 8) == 0) {
-      fseek (fp, -8, SEEK_CUR);
-      unsigned char *ptrBuf = fromUINT64(ptr);
-      fwrite (ptrBuf, 1, 8, fp);
-      free(ptrBuf);
-    } else {
-      
-    }
+    fread (freeHeader, 1, 16, fp);
 
-    free(firstFreeBuf);
+    unsigned char ptrBuf[8] = { 0 };
+    _fromUINT64 (ptrBuf, ptr);
+  
+    if (memcmp(freeHeader, nullPtr, 8) == 0) {
+
+      // Set Head Free Pointer to freed pointer.
+
+      fseek  (fp, 0, SEEK_SET);
+      fwrite (ptrBuf, 1, 8, fp);
+      fwrite (ptrBuf, 1, 8, fp);
+
+      // Set Next and Prev to NULL.
+
+      fseeko64 (fp, ptr, SEEK_SET);
+      fwrite   (nullPtr, 1, 8, fp);
+      fwrite   (nullPtr, 1, 8, fp);
+
+    } else {
+      uint64_t headPtr = toUINT64(freeHeader);
+      uint64_t endPtr = toUINT64(freeHeader + 8);
+
+      bool shallLoop = true;
+      bool shallEnd = true;
+
+      if (headPtr != 0) {
+        unsigned char freeInfo[18] = { 0 };
+        fseeko64 (fp, headPtr - 2, SEEK_SET);
+        fread    (freeInfo, 1, 18, fp);
+
+        unsigned short int freeSize = (toUINT16(freeInfo) & 0xfffe) >> 1;
+
+        if (headerSize <= freeSize) {
+          shallEnd = false;
+          shallLoop = false;
+
+          // Set Previous for headPtr to ptrBuf.
+
+          fseeko64 (fp, headPtr + 8, SEEK_SET);
+          fwrite (ptrBuf, 1, 8, fp);
+
+          // Set Next for ptr to Head Pointer (freeHeader)
+
+          fseeko64 (fp, ptr, SEEK_SET);
+          fwrite (freeHeader, 1, 8, fp);
+          fwrite (nullPtr, 1, 8, fp);
+
+          // Set Head Pointer (fseek(fp, 0, SEEK_SET)) to ptrBuf
+
+          fseek (fp, 0, SEEK_SET);
+          fwrite (ptrBuf, 1, 8, fp);
+        }
+      }
+
+      if (endPtr == 0) {
+        printf("Fatal Error: End Pointer is NULL.\n");
+        goto FEnd;
+      }
+
+      if (shallEnd) {
+        unsigned char freeInfo[18] = { 0 };
+        fseeko64 (fp, endPtr - 2, SEEK_SET);
+        fread    (freeInfo, 1, 18, fp);
+        
+        unsigned short int freeSize = (toUINT16(freeInfo) & 0xfffe) >> 1;
+
+        if (headerSize >= freeSize) {
+          shallLoop = false;
+
+          // Set Next for endPtr to ptrBuf.
+
+          fseeko64 (fp, endPtr, SEEK_SET);
+          fwrite (ptrBuf, 1, 8, fp);
+
+          // Set Previous for ptr to End Pointer (freeHeader + 8)
+
+          fseeko64 (fp, ptr, SEEK_SET);
+          fwrite (nullPtr, 1, 8, fp);
+          fwrite (freeHeader + 8, 1, 8, fp);
+
+          // Set End Pointer (fseek(fp, 8, SEEK_SET)) to ptrBuf
+
+          fseek (fp, 8, SEEK_SET);
+          fwrite (ptrBuf, 1, 8, fp);
+        }
+      }
+
+      if (shallLoop) {
+        uint64_t currentPtr = headPtr;
+
+        unsigned char currentResult[18] = { 0 };
+        while (currentPtr != 0) {
+          fseeko64 (fp, currentPtr - 2, SEEK_SET);
+          int bytesRead = fread (currentResult, 1, 18, fp);
+
+          if (bytesRead != 18) {
+            printf("Fatal Error: Failed to read Block Info.\n");
+            break;
+          }
+
+          unsigned short int freeSize = (toUINT16(currentResult) & 0xfffe) >> 1;
+
+          if (freeSize >= headerSize) {
+            uint64_t prevPtr = toUINT64(currentResult + 10);
+
+            // Set currentPtr's Previous to ptrBuf
+
+            fseek (fp, -8, SEEK_CUR);
+            fwrite (ptrBuf, 1, 8, fp);
+
+            // Set prevPtr's Next tp ptrBuf
+
+            fseeko64 (fp, prevPtr, SEEK_SET);
+            fwrite (ptrBuf, 1, 8, fp);
+
+            unsigned char newFreeInfo[16] = { 0 };
+            _fromUINT64(newFreeInfo, currentPtr);
+            memcpy(newFreeInfo + 8, currentResult + 10, 8);
+
+            fseeko64 (fp, ptr, SEEK_SET);
+            fwrite (newFreeInfo, 1, 16, fp);
+
+            break;
+          } else {
+            currentPtr = toUINT64(currentResult + 2);
+          }
+        }
+      }
+    }
   }
 
-  free(pointerInfo);
+FEnd:
+
+  fclose (fp);
+}
+
+void dWrite(const char *filename, uint64_t ptr, unsigned char *wContent, int len) {
+  FILE *fp;
+
+  fp = fopen (filename, "r+b");
+
+  unsigned char pointerInfo[2] = { 0 };
+
+  fseeko64 (fp, ptr - 2, SEEK_SET);
+  int res = fread (pointerInfo, 1, 2, fp);
+  unsigned short int headerInfo = toUINT16(pointerInfo);
+  unsigned short int headerSize = (headerInfo & 0xfffe) >> 1;
+  bool isAllocated = (headerInfo & 1) == 1;
+
+  if (isAllocated == false) {
+    printf("Block isn't allocated.\n");
+  } else {
+    if (len > headerSize) {
+      printf("Buffer overflow.\n");
+    } else {
+      fseeko64 (fp, 0, SEEK_CUR);
+      fwrite (wContent, 1, len, fp);
+    }
+  }
+
   fclose (fp);
 }
 
@@ -145,17 +304,4 @@ void init(const char *filename) {
   fwrite (nullPtr, 1, 8, fp);
    
   fclose(fp);
-}
-
-int main () {
-  init("./mainDB");
-  uint64_t ptr = alloc("./mainDB", 16);
-  uint64_t ptr2 = alloc("./mainDB", 16);
-
-  printf("Pointer #1: 0x%016llx\n", ptr);
-  printf("Pointer #2: 0x%016llx\n", ptr2);
-
-  free("./mainDB", ptr2);
-
-  return 0;
 }
