@@ -5,6 +5,8 @@
 
 unsigned char nullPtr[16] = { 0 };
 
+unsigned char initalPointers[24] = { 0 };
+
 int getSize(int inSize) {
   if (inSize < 16) return 16;
   return inSize;
@@ -54,7 +56,7 @@ unsigned char *encodeBlockInfo(int size) {
 }
 
 uint64_t _allocEnd(FILE *fp, int size) {
-  fseek(fp, 0, SEEK_END);
+  fseek (fp, 0, SEEK_END);
   uint64_t pos = ftello64(fp);
 
   unsigned char *blockInfo = encodeBlockInfo(size);
@@ -76,7 +78,7 @@ uint64_t alloc(const char *filename, int inSize) {
 
   unsigned char freeHeader[16] = { 0 };
 
-  fseek (fp, 0, SEEK_SET);
+  fseek (fp, 8, SEEK_SET);
   fread (freeHeader, 1, 16, fp);
 
 
@@ -111,7 +113,7 @@ void _setFreeInfo(FILE *fp, uint64_t next, uint64_t prev) {
 }
 
 void free(const char *filename, uint64_t ptr) {
-  if (ptr < 16) {
+  if (ptr < 24) {
     printf("Illegal Pointer/Position\n");
     return;
   }
@@ -139,7 +141,7 @@ void free(const char *filename, uint64_t ptr) {
 
     unsigned char freeHeader[16] = { 0 };
 
-    fseek (fp, 0, SEEK_SET);
+    fseek (fp, 8, SEEK_SET);
     fread (freeHeader, 1, 16, fp);
 
     unsigned char ptrBuf[8] = { 0 };
@@ -149,7 +151,7 @@ void free(const char *filename, uint64_t ptr) {
 
       // Set Head Free Pointer to freed pointer.
 
-      fseek  (fp, 0, SEEK_SET);
+      fseek  (fp, 8, SEEK_SET);
       fwrite (ptrBuf, 1, 8, fp);
       fwrite (ptrBuf, 1, 8, fp);
 
@@ -188,7 +190,7 @@ void free(const char *filename, uint64_t ptr) {
 
           // Set Head Pointer (fseek(fp, 0, SEEK_SET)) to ptrBuf
 
-          fseek (fp, 0, SEEK_SET);
+          fseek (fp, 8, SEEK_SET);
           fwrite (ptrBuf, 1, 8, fp);
         }
       }
@@ -220,7 +222,7 @@ void free(const char *filename, uint64_t ptr) {
 
           // Set End Pointer (fseek(fp, 8, SEEK_SET)) to ptrBuf
 
-          fseek (fp, 8, SEEK_SET);
+          fseek (fp, 16, SEEK_SET);
           fwrite (ptrBuf, 1, 8, fp);
         }
       }
@@ -305,8 +307,9 @@ void init(const char *filename) {
   if (fp == NULL) {
       return;
   }
-  // Set Head Pointer and End Pointer to NULL
-  fwrite (nullPtr, 1, 16, fp);
+  
+  // Set Entry Pointer, Head Pointer and End Pointer to NULL
+  fwrite (initalPointers, 1, 24, fp);
    
   fclose(fp);
 }
