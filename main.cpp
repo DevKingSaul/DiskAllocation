@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-unsigned char nullPtr[] = {0,0,0,0,0,0,0,0};
+unsigned char nullPtr[16] = { 0 };
 
 int getSize(int inSize) {
   if (inSize < 16) return 16;
@@ -95,6 +95,21 @@ uint64_t alloc(const char *filename, int inSize) {
   return returnPtr;
 }
 
+void log(unsigned char *arr, int len) {
+  for (int i = 0; i < len; i++) {
+    printf("%02x",arr[i]);
+  }
+  printf("\n");
+}
+
+void _setFreeInfo(FILE *fp, uint64_t next, uint64_t prev) {
+  unsigned char freeInfo[16] = { 0 };
+  _fromUINT64(freeInfo, next);
+  _fromUINT64(freeInfo + 8, prev);
+
+  fwrite (freeInfo, 1, 16, fp);
+}
+
 void free(const char *filename, uint64_t ptr) {
   if (ptr < 16) {
     printf("Illegal Pointer/Position\n");
@@ -112,8 +127,6 @@ void free(const char *filename, uint64_t ptr) {
   unsigned short int headerInfo = toUINT16(pointerInfo);
   unsigned short int headerSize = (headerInfo & 0xfffe) >> 1;
   bool isAllocated = (headerInfo & 1) == 1;
-
-  printf("Block Size: %u\n", headerSize);
   
   if (isAllocated == false) {
     printf("This Pointer isnt even allocated ;-;\n");
@@ -143,8 +156,7 @@ void free(const char *filename, uint64_t ptr) {
       // Set Next and Prev to NULL.
 
       fseeko64 (fp, ptr, SEEK_SET);
-      fwrite   (nullPtr, 1, 8, fp);
-      fwrite   (nullPtr, 1, 8, fp);
+      fwrite   (nullPtr, 1, 16, fp);
 
     } else {
       uint64_t headPtr = toUINT64(freeHeader);
@@ -172,8 +184,7 @@ void free(const char *filename, uint64_t ptr) {
           // Set Next for ptr to Head Pointer (freeHeader)
 
           fseeko64 (fp, ptr, SEEK_SET);
-          fwrite (freeHeader, 1, 8, fp);
-          fwrite (nullPtr, 1, 8, fp);
+          _setFreeInfo(fp, headPtr, 0);
 
           // Set Head Pointer (fseek(fp, 0, SEEK_SET)) to ptrBuf
 
@@ -184,7 +195,7 @@ void free(const char *filename, uint64_t ptr) {
 
       if (endPtr == 0) {
         printf("Fatal Error: End Pointer is NULL.\n");
-        goto FEnd;
+        goto end;
       }
 
       if (shallEnd) {
@@ -205,8 +216,7 @@ void free(const char *filename, uint64_t ptr) {
           // Set Previous for ptr to End Pointer (freeHeader + 8)
 
           fseeko64 (fp, ptr, SEEK_SET);
-          fwrite (nullPtr, 1, 8, fp);
-          fwrite (freeHeader + 8, 1, 8, fp);
+          _setFreeInfo(fp, 0, endPtr);
 
           // Set End Pointer (fseek(fp, 8, SEEK_SET)) to ptrBuf
 
@@ -238,17 +248,15 @@ void free(const char *filename, uint64_t ptr) {
             fseek (fp, -8, SEEK_CUR);
             fwrite (ptrBuf, 1, 8, fp);
 
-            // Set prevPtr's Next tp ptrBuf
+            // Set prevPtr's Next to ptrBuf
 
-            fseeko64 (fp, prevPtr, SEEK_SET);
-            fwrite (ptrBuf, 1, 8, fp);
-
-            unsigned char newFreeInfo[16] = { 0 };
-            _fromUINT64(newFreeInfo, currentPtr);
-            memcpy(newFreeInfo + 8, currentResult + 10, 8);
+            if (prevPtr != 0) {
+              fseeko64 (fp, prevPtr, SEEK_SET);
+              fwrite (ptrBuf, 1, 8, fp);
+            }
 
             fseeko64 (fp, ptr, SEEK_SET);
-            fwrite (newFreeInfo, 1, 16, fp);
+            _setFreeInfo(fp, currentPtr, prevPtr);
 
             break;
           } else {
@@ -259,8 +267,7 @@ void free(const char *filename, uint64_t ptr) {
     }
   }
 
-FEnd:
-
+end:
   fclose (fp);
 }
 
@@ -298,10 +305,8 @@ void init(const char *filename) {
   if (fp == NULL) {
       return;
   }
-  // Set Head Pointer
-  fwrite (nullPtr, 1, 8, fp);
-  // Set End Pointer
-  fwrite (nullPtr, 1, 8, fp);
+  // Set Head Pointer and End Pointer to NULL
+  fwrite (nullPtr, 1, 16, fp);
    
   fclose(fp);
 }
