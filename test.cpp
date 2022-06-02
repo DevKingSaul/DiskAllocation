@@ -30,5 +30,12 @@ int main () {
   free("./mainDB", ptr4);
   free("./mainDB", ptr2);
 
+  uint64_t ptrNew = alloc("./mainDB", 30);
+  uint64_t ptrNew2 = alloc("./mainDB", 32);
+  uint64_t ptrNew3 = alloc("./mainDB", 21);
+  uint64_t ptrNew4 = alloc("./mainDB", 25000);
+
+  printf ("%llx\n", ptrNew);
+
   return 0;
 }

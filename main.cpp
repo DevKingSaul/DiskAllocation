@@ -67,6 +67,55 @@ uint64_t _allocEnd(FILE *fp, int size) {
   return pos + 2ULL;
 }
 
+void log(unsigned char *arr, int len) {
+  for (int i = 0; i < len; i++) {
+    printf("%02x",arr[i]);
+  }
+  printf("\n");
+}
+
+void _setFreeInfo(FILE *fp, uint64_t next, uint64_t prev) {
+  unsigned char freeInfo[16] = { 0 };
+  _fromUINT64(freeInfo, next);
+  _fromUINT64(freeInfo + 8, prev);
+
+  fwrite (freeInfo, 1, 16, fp);
+}
+
+void _unlinkFreeBlock(FILE *fp, unsigned char *freeInfo) {
+  uint64_t nextPtr = toUINT64(freeInfo);
+  uint64_t prevPtr = toUINT64(freeInfo + 8);
+
+  unsigned char fileHeadOffset = 0;
+  unsigned char fileHeadWrite = 0;
+
+  // Set NextPtr's Previous to PrevPtr, if 0 then set end to PrevPtr
+
+  if (nextPtr == 0) {
+    fileHeadOffset = 8;
+    fileHeadWrite = 8;
+  } else {
+    fseeko64(fp, nextPtr + 8, SEEK_SET);
+    fwrite (freeInfo + 8, 1, 8, fp);
+  }
+
+  // Set PrevPtr's Next to NextPtr, if 0 then set head to NextPtr
+
+  if (prevPtr == 0) {
+    fileHeadOffset = 0;
+    fileHeadWrite += 8;
+  } else {
+    fseeko64(fp, prevPtr, SEEK_SET);
+    fwrite (freeInfo, 1, 8, fp);
+  }
+
+  if (fileHeadWrite != 0) {
+    fseeko64(fp, 8 + fileHeadOffset, SEEK_SET);
+    fwrite (freeInfo + fileHeadOffset, 1, fileHeadWrite, fp);
+  }
+}
+
+
 uint64_t alloc(const char *filename, int inSize) {
   if (inSize > 0x7fff) return 0;
   int size = getSize(inSize);
@@ -88,28 +137,61 @@ uint64_t alloc(const char *filename, int inSize) {
     printf("Free Block found.\n");
     uint64_t headPtr = toUINT64(freeHeader);
     uint64_t endPtr = toUINT64(freeHeader + 8);
+    bool shallLoop = true;
 
-    returnPtr = _allocEnd(fp, size);
+    if (endPtr == 0) {
+      printf("Fatal Error: End Pointer is NULL.\n");
+      goto end;
+    }
+
+    unsigned char freeInfo[2] = { 0 };
+    fseeko64 (fp, endPtr - 2, SEEK_SET);
+    fread    (freeInfo, 1, 2, fp);
+        
+    unsigned short int headerSize = (toUINT16(freeInfo) & 0xfffe) >> 1;
+
+    if (size > headerSize) {
+      shallLoop = false;
+
+      returnPtr = _allocEnd(fp, size);
+    }
+
+    if (shallLoop) {
+      uint64_t currentPtr = headPtr;
+
+        unsigned char currentResult[18] = { 0 };
+        while (currentPtr != 0) {
+          fseeko64 (fp, currentPtr - 2, SEEK_SET);
+          int bytesRead = fread (currentResult, 1, 18, fp);
+
+          if (bytesRead != 18) {
+            printf("Fatal Error: Failed to read Block Info.\n");
+            break;
+          }
+
+          unsigned short int freeSize = (toUINT16(currentResult) & 0xfffe) >> 1;
+
+          if (freeSize >= size) {
+            _unlinkFreeBlock(fp, currentResult + 2);
+
+            currentResult[1] |= 1;
+            fseeko64 (fp, currentPtr - 1, SEEK_SET);
+            fwrite (currentResult + 1, 1, 1, fp);
+            fseek  (fp, freeSize + 1, SEEK_CUR);
+            fwrite (currentResult + 1, 1, 1, fp);
+            returnPtr = currentPtr;
+            break;
+          } else {
+            currentPtr = toUINT64(currentResult + 2);
+          }
+        }
+    }
   }
 
+end:
   fclose (fp);
 
   return returnPtr;
-}
-
-void log(unsigned char *arr, int len) {
-  for (int i = 0; i < len; i++) {
-    printf("%02x",arr[i]);
-  }
-  printf("\n");
-}
-
-void _setFreeInfo(FILE *fp, uint64_t next, uint64_t prev) {
-  unsigned char freeInfo[16] = { 0 };
-  _fromUINT64(freeInfo, next);
-  _fromUINT64(freeInfo + 8, prev);
-
-  fwrite (freeInfo, 1, 16, fp);
 }
 
 void free(const char *filename, uint64_t ptr) {
