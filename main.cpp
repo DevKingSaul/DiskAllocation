@@ -35,31 +35,26 @@ void _fromUINT64(unsigned char *result, uint64_t uint) {
   result[0] = (uint >> 56) & 0xff;
 }
 
-unsigned char *fromUINT64(uint64_t uint) {
-  unsigned char *result = (unsigned char *)malloc(8);
-  _fromUINT64(result, uint);
-  return result;
-}
-
 unsigned short int toUINT16(unsigned char *buf) {
     unsigned short int result = buf[1];
     result |= ((unsigned short int) buf[0] << 8);
     return result;
 }
 
-unsigned char *encodeBlockInfo(int size) {
-  unsigned char *buf = (unsigned char *)malloc(2);
+bool encodeBlockInfo(int size, unsigned char *buf) {
   buf[0] = (size >> 7);
   buf[1] = (((size & 0xff) << 1) | 1);
 
-  return buf;
+  return TRUE;
 }
 
 uint64_t _allocEnd(FILE *fp, int size) {
   fseek (fp, 0, SEEK_END);
   uint64_t pos = ftello64(fp);
 
-  unsigned char *blockInfo = encodeBlockInfo(size);
+  unsigned char blockInfo[2];
+  encodeBlockInfo(size, blockInfo);
+
   fwrite (blockInfo, 1, 2, fp);
   fseek (fp, size, SEEK_CUR);
   fwrite (blockInfo, 1, 2, fp);
